@@ -13,6 +13,8 @@ const os = std.os;
 const Allocator = std.mem.Allocator;
 const c_allocator = std.heap.c_allocator;
 const expectEqual = std.testing.expectEqual;
+const expectError = std.testing.expectError;
+const expect = std.testing.expect;
 const assert = std.debug.assert;
 
 const MBEDTLS_ERR_PK_ALLOC_FAILED   = -0x3F80;
@@ -26,6 +28,10 @@ const MBEDTLS_ERR_AES_BAD_INPUT_DATA        = -0x0021;
 const MBEDTLS_ERR_AES_INVALID_KEY_LENGTH    = -0x0020;
 const MBEDTLS_ERR_AES_INVALID_INPUT_LENGTH  = -0x0022;
 
+const MBEDTLS_ERR_NET_UNKNOWN_HOST          = -0x0052;
+const MBEDTLS_ERR_NET_SOCKET_FAILED         = -0x0042;
+const MBEDTLS_ERR_NET_CONNECT_FAILED        = -0x0044;
+
 pub const mbedTLS = struct {
     server_fd: *c.mbedtls_net_context,
     ssl_conf: *c.mbedtls_ssl_config,
@@ -36,7 +42,7 @@ pub const mbedTLS = struct {
     entropyfn: @TypeOf(c.mbedtls_entropy_func),
     allocator: *Allocator,
 
-    pub fn init(allocator: *Allocator, cafile: []const u8) !mbedTLS {
+    pub fn init(allocator: *Allocator) !mbedTLS {
         var net_ctx = try allocator.create(c.mbedtls_net_context);
         var entropy_ctx = try allocator.create(c.mbedtls_entropy_context);
         var ssl_config = c.zmbedtls_ssl_config_alloc();
@@ -70,7 +76,7 @@ pub const mbedTLS = struct {
         OutOfMemory,
     };
 
-    pub fn x509LoadFile(self: *mbedTLS, cafile: []const u8) X509Error!void {
+    pub fn x509CrtParseFile(self: *mbedTLS, cafile: []const u8) X509Error!void {
         const rc = c.mbedtls_x509_crt_parse_file(self.ca_chain, &cafile[0]);
         switch(rc) {
             0 => {},
@@ -81,6 +87,29 @@ pub const mbedTLS = struct {
         }
     }
 
+    pub const Proto = enum(u2) { PROTO_TCP, PROTO_UDP };
+
+    const ConnError = error {
+        Corruption,
+        UnknownHost,
+        SocketFailed,
+        ConnectionFailed,
+        OutOfMemory
+    };
+
+    pub fn netConnect(self: *mbedTLS, host: [*]const u8, port: [*]const u8, proto: Proto) ConnError!void {  
+        const rc = c.mbedtls_net_connect(self.server_fd, host, port, @enumToInt(proto)); 
+        switch(rc) {
+            0 => {},
+            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
+            MBEDTLS_ERR_NET_UNKNOWN_HOST => return error.UnknownHost,
+            MBEDTLS_ERR_NET_SOCKET_FAILED => return error.SocketFailed,
+            MBEDTLS_ERR_NET_CONNECT_FAILED => return error.ConnectionFailed,
+            else => unreachable
+        }
+
+    }  
+
     const SeedError = error {
         GenericError,
         Corruption,
@@ -90,10 +119,11 @@ pub const mbedTLS = struct {
         OutOfMemory
     };
 
-    pub fn seed(self: *mbedTLS, additional: ?[]const u8) SeedError!void {
+    pub fn ctrDrbgSeed(self: *mbedTLS, additional: ?[]const u8) SeedError!void {
         var rc: c_int = 1;
 
         if(additional) |str| {
+            // Nasty
             var custom = try std.mem.dupe(self.allocator, u8, str);
             defer self.allocator.free(custom);
             rc = c.mbedtls_ctr_drbg_seed(self.drbg, self.entropyfn, self.entropy, custom.ptr, str.len);
@@ -131,8 +161,7 @@ const PageAllocator = std.heap.page_allocator;
 var arena = ArenaAllocator.init(PageAllocator);
 
 test "initialize mbedtls" {
-    const cafile = "cacert.pem";
-    var mbed = try mbedTLS.init(&arena.allocator, cafile);
+    var mbed = try mbedTLS.init(&arena.allocator);
     defer mbed.deinit();
 
     expectEqual(@as(c_int, -1), mbed.server_fd.fd);
@@ -140,21 +169,38 @@ test "initialize mbedtls" {
 
 test "load certificate file" {
     const cafile = "cacert.pem";
-    var mbed = try mbedTLS.init(&arena.allocator, cafile);
+    var mbed = try mbedTLS.init(&arena.allocator);
     defer mbed.deinit();
 
     expectEqual(@as(c_int, 0), mbed.ca_chain.*.version);
-    try mbed.x509LoadFile(cafile);
+    try mbed.x509CrtParseFile(cafile);
     expectEqual(@as(c_int, 3), mbed.ca_chain.*.version);
 } 
 
 test "run seed function" {
-    const cafile = "cacert.pem";
-    var mbed = try mbedTLS.init(&arena.allocator, cafile);
+    var mbed = try mbedTLS.init(&arena.allocator);
     defer mbed.deinit();
     
-    try mbed.seed("SampleDevice");
-    try mbed.seed(null);
+    expectEqual(mbed.drbg.entropy_len, 0);
+
+    // Check that it works with additional data and without
+    try mbed.ctrDrbgSeed(null);
+    try mbed.ctrDrbgSeed("SampleDevice");
+    expectEqual(mbed.drbg.entropy_len, 48);
+}
+
+test "connect to host" {
+    const cafile = "cacert.pem";
+    var mbed = try mbedTLS.init(&arena.allocator);
+    defer mbed.deinit();
+
+    try mbed.x509CrtParseFile(cafile);
+    try mbed.ctrDrbgSeed("SampleDevice");
+    expectError(error.UnknownHost, mbed.netConnect("google.zom", "443", mbedTLS.Proto.PROTO_TCP));
+    expectEqual(mbed.server_fd.fd, -1);
+
+    try mbed.netConnect("google.com", "443", mbedTLS.Proto.PROTO_TCP);
+    expect(mbed.server_fd.fd > -1);
 }
 
 test "can do mbedtls_ssl_config workaround" {
