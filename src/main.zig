@@ -12,7 +12,7 @@ const c = @cImport({
 const os = std.os;
 const Allocator = std.mem.Allocator;
 const c_allocator = std.heap.c_allocator;
-const testing = std.testing;
+const expectEqual = std.testing.expectEqual;
 const assert = std.debug.assert;
 
 const MBEDTLS_ERR_PK_ALLOC_FAILED   = -0x3F80;
@@ -32,15 +32,9 @@ pub const mbedTLS = struct {
     ssl: *c.mbedtls_ssl_context,
     entropy: *c.mbedtls_entropy_context,
     drbg: *c.mbedtls_ctr_drbg_context,
-    cacert: *c.mbedtls_x509_crt,
+    ca_chain: *c.mbedtls_x509_crt,
     entropyfn: @TypeOf(c.mbedtls_entropy_func),
     allocator: *Allocator,
-
-    const CAFileError = error {
-        AllocationFailed,
-        BadInputData,
-        FileIoError
-    };
 
     pub fn init(allocator: *Allocator, cafile: []const u8) !mbedTLS {
         var net_ctx = try allocator.create(c.mbedtls_net_context);
@@ -48,23 +42,14 @@ pub const mbedTLS = struct {
         var ssl_config = c.zmbedtls_ssl_config_alloc();
         var ssl_ctx = try allocator.create(c.mbedtls_ssl_context);
         var drbg_ctx = try allocator.create(c.mbedtls_ctr_drbg_context);
-        var ca_ctx = try allocator.create(c.mbedtls_x509_crt);
+        var ca_chain = try allocator.create(c.mbedtls_x509_crt);
 
         c.mbedtls_net_init(net_ctx);
         c.mbedtls_entropy_init(entropy_ctx);
         c.mbedtls_ssl_init(ssl_ctx);
         c.zmbedtls_ssl_config_init(ssl_config);
         c.mbedtls_ctr_drbg_init(drbg_ctx);
-        c.mbedtls_x509_crt_init(ca_ctx);
-
-        const rc = c.mbedtls_x509_crt_parse_file(ca_ctx, &cafile[0]);
-        switch(rc) {
-            0 => {},
-            MBEDTLS_ERR_PK_ALLOC_FAILED => return error.AllocationFailed,
-            MBEDTLS_ERR_PK_BAD_INPUT_DATA => return error.BadInputData,
-            MBEDTLS_ERR_PK_FILE_IO_ERROR => return error.FileIoError,
-            else => unreachable
-        }
+        c.mbedtls_x509_crt_init(ca_chain);
 
         return mbedTLS {
             .server_fd = net_ctx,
@@ -72,18 +57,49 @@ pub const mbedTLS = struct {
             .ssl = ssl_ctx,
             .ssl_conf = @ptrCast(*c.mbedtls_ssl_config, ssl_config),
             .drbg = drbg_ctx,
-            .cacert = ca_ctx,
+            .ca_chain = ca_chain,
             .entropyfn = c.mbedtls_entropy_func,
             .allocator = allocator
         };
     }
 
-    pub fn setupEntropy(self: *mbedTLS, deviceName: []const u8) !void {
-        var c_name = try std.mem.dupe(self.allocator, u8, deviceName);
-        var name = @ptrCast(*c_void, c_name);
-        const rc = c.mbedtls_ctr_drbg_seed(
-            self.drbg, self.entropyfn, self.entropy, deviceName.ptr, deviceName.len
-        );
+    const X509Error = error {
+        AllocationFailed,
+        BadInputData,
+        FileIoError,
+        OutOfMemory,
+    };
+
+    pub fn x509LoadFile(self: *mbedTLS, cafile: []const u8) X509Error!void {
+        const rc = c.mbedtls_x509_crt_parse_file(self.ca_chain, &cafile[0]);
+        switch(rc) {
+            0 => {},
+            MBEDTLS_ERR_PK_ALLOC_FAILED => return error.AllocationFailed,
+            MBEDTLS_ERR_PK_BAD_INPUT_DATA => return error.BadInputData,
+            MBEDTLS_ERR_PK_FILE_IO_ERROR => return error.FileIoError,
+            else => unreachable
+        }
+    }
+
+    const SeedError = error {
+        GenericError,
+        Corruption,
+        BadInputData,
+        InvalidKeyLength,
+        InvalidInputLength,
+        OutOfMemory
+    };
+
+    pub fn seed(self: *mbedTLS, additional: ?[]const u8) SeedError!void {
+        var rc: c_int = 1;
+
+        if(additional) |str| {
+            var custom = try std.mem.dupe(self.allocator, u8, str);
+            defer self.allocator.free(custom);
+            rc = c.mbedtls_ctr_drbg_seed(self.drbg, self.entropyfn, self.entropy, custom.ptr, str.len);
+        } else {
+            rc = c.mbedtls_ctr_drbg_seed(self.drbg, self.entropyfn, self.entropy, 0x0, 0x0);
+        }
 
         switch(rc) {
             0 => {},
@@ -105,7 +121,7 @@ pub const mbedTLS = struct {
         self.allocator.destroy(self.entropy);      
         self.allocator.destroy(self.ssl);
         self.allocator.destroy(self.drbg);
-        self.allocator.destroy(self.cacert);
+        self.allocator.destroy(self.ca_chain);
         self.* = undefined;
     }
 };
@@ -119,22 +135,33 @@ test "initialize mbedtls" {
     var mbed = try mbedTLS.init(&arena.allocator, cafile);
     defer mbed.deinit();
 
-    assert(mbed.server_fd.fd == -1);
+    expectEqual(@as(c_int, -1), mbed.server_fd.fd);
 }
 
-test "setup entropy" {
+test "load certificate file" {
+    const cafile = "cacert.pem";
+    var mbed = try mbedTLS.init(&arena.allocator, cafile);
+    defer mbed.deinit();
+
+    expectEqual(@as(c_int, 0), mbed.ca_chain.*.version);
+    try mbed.x509LoadFile(cafile);
+    expectEqual(@as(c_int, 3), mbed.ca_chain.*.version);
+} 
+
+test "run seed function" {
     const cafile = "cacert.pem";
     var mbed = try mbedTLS.init(&arena.allocator, cafile);
     defer mbed.deinit();
     
-    try mbed.setupEntropy("SampleDevice");
+    try mbed.seed("SampleDevice");
+    try mbed.seed(null);
 }
 
 test "can do mbedtls_ssl_config workaround" {
     var a = c.zmbedtls_ssl_config_alloc();
     c.zmbedtls_ssl_config_init(a);    
     var b = c.zmbedtls_ssl_config_defaults(a);    
-    assert(b == 0);
+    expectEqual(@as(c_int, 0), b);
 
     c.zmbedtls_ssl_config_free(a);
 }
