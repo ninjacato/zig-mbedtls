@@ -32,6 +32,10 @@ const MBEDTLS_ERR_NET_UNKNOWN_HOST          = -0x0052;
 const MBEDTLS_ERR_NET_SOCKET_FAILED         = -0x0042;
 const MBEDTLS_ERR_NET_CONNECT_FAILED        = -0x0044;
 
+const MBEDTLS_ERR_MPI_BAD_INPUT_DATA        = -0x0004;
+
+const MBEDTLS_SSL_VERIFY_REQUIRED           = 2;
+
 pub const mbedTLS = struct {
     server_fd: *c.mbedtls_net_context,
     ssl_conf: *c.mbedtls_ssl_config,
@@ -40,6 +44,7 @@ pub const mbedTLS = struct {
     drbg: *c.mbedtls_ctr_drbg_context,
     ca_chain: *c.mbedtls_x509_crt,
     entropyfn: @TypeOf(c.mbedtls_entropy_func),
+    proto: Proto,
     allocator: *Allocator,
 
     pub fn init(allocator: *Allocator) !mbedTLS {
@@ -65,6 +70,7 @@ pub const mbedTLS = struct {
             .drbg = drbg_ctx,
             .ca_chain = ca_chain,
             .entropyfn = c.mbedtls_entropy_func,
+            .proto = undefined,
             .allocator = allocator
         };
     }
@@ -98,6 +104,7 @@ pub const mbedTLS = struct {
     };
 
     pub fn netConnect(self: *mbedTLS, host: [*]const u8, port: [*]const u8, proto: Proto) ConnError!void {  
+        self.proto = proto;
         const rc = c.mbedtls_net_connect(self.server_fd, host, port, @enumToInt(proto)); 
         switch(rc) {
             0 => {},
@@ -109,6 +116,30 @@ pub const mbedTLS = struct {
         }
 
     }  
+
+    pub const SSLEndpoint = enum(u2) { IS_CLIENT, IS_SERVER };
+    
+    pub const SSLPreset = enum(u2) { DEFAULT, SUITEB };
+
+    const SSLConfigError = error {
+        Corruption,
+        BadInputData
+    };
+
+    pub fn sslConfigDefaults(self: *mbedTLS, endpoint: SSLEndpoint, presets: SSLPreset) SSLConfigError!void {
+        const rc = switch(presets) {
+            .SUITEB => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(endpoint), @enumToInt(self.proto), 2),
+            .DEFAULT => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(endpoint), @enumToInt(self.proto), 0),
+            else => unreachable
+        };
+        
+        switch(rc) {
+            0 => {},
+            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
+            MBEDTLS_ERR_MPI_BAD_INPUT_DATA => return error.BadInputData,
+            else => unreachable
+        }
+    }
 
     const SeedError = error {
         GenericError,
@@ -201,6 +232,39 @@ test "connect to host" {
 
     try mbed.netConnect("google.com", "443", mbedTLS.Proto.PROTO_TCP);
     expect(mbed.server_fd.fd > -1);
+}
+
+// This test is very sketchy and will break on any ssl_conf struct changes in 
+// mbedTLS. Disable if too much hassle too maintain
+test "set ssl defaults and presets" {
+    var mbed = try mbedTLS.init(&arena.allocator);
+    defer mbed.deinit();
+
+    // We dont have field access since ssl_conf is an opaque type, hence
+    // there is no good way to test this function. That said, as a simple
+    // sanity check I am here checking that the different version limits
+    // for TLS versions in the struct is set to 3 after defaults is set.
+    // These entries in the struct is on memor address 0x170 after base
+    // If 0x00500000 is the base address, then:
+    // 0x100500170: 3 == unsigned char max_major_ver; 
+    // 0x100500171: 3 == unsigned char max_minor_ver;
+    // 0x100500172: 3 == unsigned char min_major_ver;
+    // 0x100500173: 1 == unsigned char min_minor_ver;
+    const memaddr: usize = @ptrToInt(mbed.ssl_conf);
+    const max_major_ver: *u2 = @intToPtr(*align(1) u2, memaddr+0x170);
+    const max_minor_ver: *u2 = @intToPtr(*align(1) u2, memaddr+0x171);
+    const min_major_ver: *u2 = @intToPtr(*align(1) u2, memaddr+0x172);
+    const min_minor_ver: *u2 = @intToPtr(*align(1) u2, memaddr+0x173);
+
+    expect(0 == max_major_ver.*);
+    expect(0 == max_minor_ver.*);
+    expect(0 == min_major_ver.*);
+    expect(0 == min_minor_ver.*);
+    try mbed.sslConfigDefaults(mbedTLS.SSLEndpoint.IS_CLIENT, mbedTLS.SSLPreset.DEFAULT);
+    expect(3 == max_major_ver.*);
+    expect(3 == max_minor_ver.*);
+    expect(3 == min_major_ver.*);
+    expect(1 == min_minor_ver.*);
 }
 
 test "can do mbedtls_ssl_config workaround" {
