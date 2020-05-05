@@ -1,3 +1,4 @@
+usingnamespace @import("bits.zig");
 const std = @import("std");
 const c = @cImport({
     @cInclude("lib/zig_ssl_config.h");
@@ -11,30 +12,10 @@ const c = @cImport({
 
 const os = std.os;
 const Allocator = std.mem.Allocator;
-const c_allocator = std.heap.c_allocator;
 const expectEqual = std.testing.expectEqual;
 const expectError = std.testing.expectError;
 const expect = std.testing.expect;
 const assert = std.debug.assert;
-
-const MBEDTLS_ERR_PK_ALLOC_FAILED   = -0x3F80;
-const MBEDTLS_ERR_PK_BAD_INPUT_DATA = -0x3E80;
-const MBEDTLS_ERR_PK_FILE_IO_ERROR  = -0x3E00;
-
-const MBEDTLS_ERR_ERROR_GENERIC_ERROR       = -0x0001;
-const MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED = -0x006E;
-
-const MBEDTLS_ERR_AES_BAD_INPUT_DATA        = -0x0021;
-const MBEDTLS_ERR_AES_INVALID_KEY_LENGTH    = -0x0020;
-const MBEDTLS_ERR_AES_INVALID_INPUT_LENGTH  = -0x0022;
-
-const MBEDTLS_ERR_NET_UNKNOWN_HOST          = -0x0052;
-const MBEDTLS_ERR_NET_SOCKET_FAILED         = -0x0042;
-const MBEDTLS_ERR_NET_CONNECT_FAILED        = -0x0044;
-
-const MBEDTLS_ERR_MPI_BAD_INPUT_DATA        = -0x0004;
-
-const MBEDTLS_SSL_VERIFY_REQUIRED           = 2;
 
 pub const mbedTLS = struct {
     server_fd: *c.mbedtls_net_context,
