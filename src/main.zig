@@ -25,7 +25,6 @@ pub const mbedTLS = struct {
     drbg: *c.mbedtls_ctr_drbg_context,
     ca_chain: *c.mbedtls_x509_crt,
     entropyfn: @TypeOf(c.mbedtls_entropy_func),
-    proto: Proto,
     allocator: *Allocator,
 
     pub fn init(allocator: *Allocator) !mbedTLS {
@@ -51,7 +50,6 @@ pub const mbedTLS = struct {
             .drbg = drbg_ctx,
             .ca_chain = ca_chain,
             .entropyfn = c.mbedtls_entropy_func,
-            .proto = undefined,
             .allocator = allocator
         };
     }
@@ -74,7 +72,7 @@ pub const mbedTLS = struct {
         }
     }
 
-    pub const Proto = enum(u2) { PROTO_TCP, PROTO_UDP };
+    pub const Proto = enum(u2) { TCP, UDP };
 
     const ConnError = error {
         Corruption,
@@ -85,7 +83,6 @@ pub const mbedTLS = struct {
     };
 
     pub fn netConnect(self: *mbedTLS, host: [*]const u8, port: [*]const u8, proto: Proto) ConnError!void {  
-        self.proto = proto;
         const rc = c.mbedtls_net_connect(self.server_fd, host, port, @enumToInt(proto)); 
         switch(rc) {
             0 => {},
@@ -99,7 +96,6 @@ pub const mbedTLS = struct {
     }  
 
     pub const SSLEndpoint = enum(u2) { IS_CLIENT, IS_SERVER };
-    
     pub const SSLPreset = enum(u2) { DEFAULT, SUITEB };
 
     const SSLConfigError = error {
@@ -107,10 +103,20 @@ pub const mbedTLS = struct {
         BadInputData
     };
 
-    pub fn sslConfigDefaults(self: *mbedTLS, endpoint: SSLEndpoint, presets: SSLPreset) SSLConfigError!void {
-        const rc = switch(presets) {
-            .SUITEB => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(endpoint), @enumToInt(self.proto), 2),
-            .DEFAULT => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(endpoint), @enumToInt(self.proto), 0),
+    pub fn sslConfigDefaults(self: *mbedTLS, ep: SSLEndpoint, pro: Proto, pre: SSLPreset) SSLConfigError!void {
+        const rc = switch(pre) {
+            .SUITEB => c.mbedtls_ssl_config_defaults(
+                self.ssl_conf, 
+                @enumToInt(ep), 
+                @enumToInt(pro), 
+                MBEDTLS_SSL_PRESET_SUITEB
+            ),
+            .DEFAULT => c.mbedtls_ssl_config_defaults(
+                self.ssl_conf, 
+                @enumToInt(ep), 
+                @enumToInt(pro), 
+                MBEDTLS_SSL_PRESET_DEFAULT
+            ),
             else => unreachable
         };
         
@@ -208,16 +214,19 @@ test "connect to host" {
 
     try mbed.x509CrtParseFile(cafile);
     try mbed.ctrDrbgSeed("SampleDevice");
-    expectError(error.UnknownHost, mbed.netConnect("google.zom", "443", mbedTLS.Proto.PROTO_TCP));
+    expectError(error.UnknownHost, mbed.netConnect("google.zom", "443", mbedTLS.Proto.TCP));
     expectEqual(mbed.server_fd.fd, -1);
 
-    try mbed.netConnect("google.com", "443", mbedTLS.Proto.PROTO_TCP);
+    try mbed.netConnect("google.com", "443", mbedTLS.Proto.TCP);
     expect(mbed.server_fd.fd > -1);
 }
 
 // This test is very sketchy and will break on any ssl_conf struct changes in 
 // mbedTLS. Disable if too much hassle too maintain
 test "set ssl defaults and presets" {
+    const Preset = mbedTLS.SSLPreset;
+    const Endpoint = mbedTLS.SSLEndpoint;
+    const Proto = mbedTLS.Proto;
     var mbed = try mbedTLS.init(&arena.allocator);
     defer mbed.deinit();
 
@@ -241,7 +250,7 @@ test "set ssl defaults and presets" {
     expect(0 == max_minor_ver.*);
     expect(0 == min_major_ver.*);
     expect(0 == min_minor_ver.*);
-    try mbed.sslConfigDefaults(mbedTLS.SSLEndpoint.IS_CLIENT, mbedTLS.SSLPreset.DEFAULT);
+    try mbed.sslConfigDefaults(Endpoint.IS_CLIENT, Proto.TCP, Preset.DEFAULT);
     expect(3 == max_major_ver.*);
     expect(3 == max_minor_ver.*);
     expect(3 == min_major_ver.*);
