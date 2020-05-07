@@ -230,11 +230,8 @@ test "set ssl defaults and presets" {
     var mbed = try mbedTLS.init(&arena.allocator);
     defer mbed.deinit();
 
-    // We dont have field access since ssl_conf is an opaque type, hence
-    // there is no good way to test this function. That said, as a simple
-    // sanity check I am here checking that the different version limits
-    // for TLS versions in the struct is set to 3 after defaults is set.
-    // These entries in the struct is on memor address 0x170 after base
+    // We cant access these by field since the struct is opaque
+    // These entries in the struct is on memory address 0x170 after base
     // If 0x00500000 is the base address, then:
     // 0x100500170: 3 == unsigned char max_major_ver; 
     // 0x100500171: 3 == unsigned char max_minor_ver;
@@ -260,7 +257,7 @@ test "set ssl defaults and presets" {
 test "can do mbedtls_ssl_config workaround" {
     var a = c.zmbedtls_ssl_config_alloc();
     c.zmbedtls_ssl_config_init(a);    
-    var b = c.zmbedtls_ssl_config_defaults(a);    
+    var b = c.zmbedtls_ssl_config_defaults(a, 0, 0, 0);    
     expectEqual(@as(c_int, 0), b);
 
     c.zmbedtls_ssl_config_free(a);

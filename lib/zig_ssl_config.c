@@ -2,14 +2,14 @@
 #include <lib/zig_ssl_config.h>
 #include <mbedtls/ssl.h>
 
-int zmbedtls_ssl_config_defaults(void * data) {
+int zmbedtls_ssl_config_defaults(void * data, int endpoint, int proto, int presets) {
 	mbedtls_ssl_config * conf = (struct mbedtls_ssl_config *)data;
 
 	int ret = mbedtls_ssl_config_defaults(
 		conf,
-		MBEDTLS_SSL_IS_CLIENT,
-		MBEDTLS_SSL_TRANSPORT_STREAM,
-		MBEDTLS_SSL_PRESET_DEFAULT
+		endpoint,
+		proto,
+		presets
 	);
 
 	return ret;
