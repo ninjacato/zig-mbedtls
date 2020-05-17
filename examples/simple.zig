@@ -13,8 +13,15 @@ pub fn main() !void {
 
     try mbed.x509CrtParseFile(cafile);
     try mbed.ctrDrbgSeed("SampleDevice");
-    try mbed.netConnect("google.com", "443", mbedTLS.Proto.PROTO_TCP);
-    try mbed.sslConfigDefaults(mbedTLS.SSLEndpoint.IS_CLIENT, mbedTLS.SSLPreset.DEFAULT);
-    
+    try mbed.netConnect("google.com", "443", mbedTLS.Proto.TCP);
+    try mbed.sslConfigDefaults(.IS_CLIENT, .TCP, .DEFAULT);
+
+    mbed.sslConfAuthmode(.NONE);
+    mbed.sslConfRng(null); //use default
+    mbed.setDebug(null); // use default
+
+    try mbed.setHostname("hello"); // use default
+    const req = "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n";
+    const ret = try mbed.sslWrite(req);
     return;
 }
