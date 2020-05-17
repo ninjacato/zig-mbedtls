@@ -15,6 +15,13 @@ pub const MBEDTLS_ERR_NET_CONNECT_FAILED        = -0x0044;
 
 pub const MBEDTLS_ERR_MPI_BAD_INPUT_DATA        = -0x0004;
 
+pub const MBEDTLS_SSL_VERIFY_NONE               = 0;
+pub const MBEDTLS_SSL_VERIFY_OPTIONAL           = 1;
 pub const MBEDTLS_SSL_VERIFY_REQUIRED           = 2;
+
 pub const MBEDTLS_SSL_PRESET_DEFAULT            = 0;
 pub const MBEDTLS_SSL_PRESET_SUITEB             = 2;
+
+pub const MBEDTLS_ERR_SSL_BAD_INPUT_DATA        = -0x7100;
+pub const MBEDTLS_ERR_SSL_ALLOC_FAILED          = -0x7F00;
+pub const MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE   = -0x7080;

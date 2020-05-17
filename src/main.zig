@@ -11,6 +11,7 @@ const c = @cImport({
 });
 
 const os = std.os;
+const io = std.io;
 const Allocator = std.mem.Allocator;
 const expectEqual = std.testing.expectEqual;
 const expectError = std.testing.expectError;
@@ -128,6 +129,53 @@ pub const mbedTLS = struct {
         }
     }
 
+    pub const SSLVerify = enum(u2) { NONE, OPTIONAL, REQUIRED };
+
+    pub fn sslConfAuthmode(self: *mbedTLS, verify: SSLVerify) void {
+        c.mbedtls_ssl_conf_authmode(self.ssl_conf, @enumToInt(verify));
+    }
+
+    const rng_cb = fn(?*c_void, [*c]u8, usize) callconv(.C) c_int;
+
+    pub fn sslConfRng(self: *mbedTLS, f_rng: ?rng_cb) void {
+            if(f_rng) |cb| {
+                c.mbedtls_ssl_conf_rng(self.ssl_conf, cb, self.drbg);
+            } else {
+                c.mbedtls_ssl_conf_rng(self.ssl_conf, c.mbedtls_ctr_drbg_random, self.drbg);
+            }
+    }
+
+    fn dbgfn (ctx: ?*c_void, level: c_int, file: [*c]const u8, line: c_int, str: [*c]const u8) callconv(.C) void {
+        std.debug.warn("{}:{}: {}", .{file, line, str});
+    }
+
+    const debug_fn = fn (?*c_void, c_int, [*c]const u8, c_int, [*c]const u8) callconv(.C) void;
+
+    pub fn setDebug(self: *mbedTLS, debug: ?debug_fn) void {
+        var stdout = io.getStdOut().handle;
+
+        if(debug) |dbg| {
+            c.mbedtls_ssl_conf_dbg(self.ssl_conf, dbg, &stdout);
+        } else {
+            c.mbedtls_ssl_conf_dbg(self.ssl_conf, dbgfn, &stdout);
+        }
+    }
+
+    const SSLHostnameError = error {
+        BadInputData,
+        OutOfMemory
+    };
+
+    pub fn setHostname(self: *mbedTLS, hostname: []const u8) SSLHostnameError!void {
+        const rc = c.mbedtls_ssl_set_hostname(self.ssl, hostname.ptr);
+        switch(rc) {
+            0 => {},
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA => return error.BadInputData,
+            MBEDTLS_ERR_SSL_ALLOC_FAILED => return error.OutOfMemory,
+            else => unreachable
+        }
+    }
+
     const SeedError = error {
         GenericError,
         Corruption,
@@ -141,10 +189,7 @@ pub const mbedTLS = struct {
         var rc: c_int = 1;
 
         if(additional) |str| {
-            // Nasty
-            var custom = try std.mem.dupe(self.allocator, u8, str);
-            defer self.allocator.free(custom);
-            rc = c.mbedtls_ctr_drbg_seed(self.drbg, self.entropyfn, self.entropy, custom.ptr, str.len);
+            rc = c.mbedtls_ctr_drbg_seed(self.drbg, self.entropyfn, self.entropy, str.ptr, str.len);
         } else {
             rc = c.mbedtls_ctr_drbg_seed(self.drbg, self.entropyfn, self.entropy, 0x0, 0x0);
         }
@@ -157,6 +202,23 @@ pub const mbedTLS = struct {
             MBEDTLS_ERR_AES_INVALID_KEY_LENGTH => return error.InvalidKeyLength,
             MBEDTLS_ERR_AES_INVALID_INPUT_LENGTH => return error.InvalidInputLength,
             else => unreachable
+        }
+    }
+
+    pub const SSLWriteError = error {
+        Corruption,
+        BadInputData,
+        FeatureUnavailable
+    };
+
+    pub fn sslWrite(self: *mbedTLS, str: []const u8) SSLWriteError!i32 {
+        const rc = c.mbedtls_ssl_write(self.ssl, str.ptr, str.len);
+
+        switch(rc) {
+            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
+            MBEDTLS_ERR_SSL_BAD_INPUT_DATA => return error.BadInputData,
+            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE => return error.FeatureUnavailable,
+            else => return rc
         }
     }
 
@@ -221,7 +283,35 @@ test "connect to host" {
     expect(mbed.server_fd.fd > -1);
 }
 
-// This test is very sketchy and will break on any ssl_conf struct changes in 
+test "set hostname" {
+    var mbed = try mbedTLS.init(&arena.allocator);
+    defer mbed.deinit();
+
+    const excessive =
+        \\ qiqQuz2BRgENxEBUhbMTp0bimui7axuo7jy4WNbopNrNnWSkypugXLNFeionxlwAUhSxlMkVsyc6VGmRTz0gUG
+        \\ A3KRDbPCUBPiM7JsdgpI7rLP8EakT5cok2gF6KkAeVr7gfHNdg4auaEDHQfcp5OcLPIQnlVzt4OWSvRl2cOX3G
+        \\ V8haOdljSwnmptEWSwFWe2FVsj0s8orr5JGNi91kLrTTpPzaXSoClrGTuireAlLaGExuer1Ue7LAAypC2FWV"
+    ;
+
+    expectError(error.BadInputData, mbed.setHostname(excessive));
+}
+
+test "can write a request" {
+    const cafile = "cacert.pem";
+    var mbed = try mbedTLS.init(&arena.allocator);
+    defer mbed.deinit();
+
+    try mbed.x509CrtParseFile(cafile);
+    try mbed.ctrDrbgSeed("SampleDevice");
+    try mbed.netConnect("google.com", "443", mbedTLS.Proto.TCP);
+    try mbed.setHostname("zig-mbedtls");
+    const req = "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n";
+
+    const ret = try mbed.sslWrite(req);
+    expect(ret > 0);
+}
+
+// This test is very sketchy and will break on any ssl_conf struct changes in
 // mbedTLS. Disable if too much hassle too maintain
 test "set ssl defaults and presets" {
     const Preset = mbedTLS.SSLPreset;
