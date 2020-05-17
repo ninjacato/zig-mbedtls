@@ -27,4 +27,18 @@ pub fn build(b: *Builder) void {
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&main_tests.step);
+
+    const examples = b.step("examples", "Build examples");
+    const example = b.addExecutable("simple", "examples/simple.zig");
+    example.setBuildMode(mode);
+    example.addIncludeDir("/usr/local/Cellar/mbedtls/2.16.6/include");
+    example.addIncludeDir(".");
+    example.addCSourceFile("lib/zig_ssl_config.c", &[_][]const u8{"-std=c99"});
+    example.linkSystemLibrary("mbedcrypto");
+    example.linkSystemLibrary("mbedtls");
+    example.linkSystemLibrary("mbedx509");
+    example.addPackagePath("mbedtls", "mbedtls.zig");
+    example.setOutputDir("zig-cache");
+    example.install();
+    examples.dependOn(&example.step);
 }
