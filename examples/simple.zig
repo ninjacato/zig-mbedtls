@@ -26,12 +26,12 @@ pub fn main() !void {
     mbed.sslSetBIO();
 
     var run = true;
-    while(run) {
+    while (run) {
         const r: bool = mbed.sslHandshake() catch |err| res: {
-            switch(err) {
+            switch (err) {
                 error.WantRead => break :res false,
                 error.WantWrite => break :res false,
-                else => unreachable
+                else => unreachable,
             }
         };
 
@@ -40,18 +40,18 @@ pub fn main() !void {
 
     const req = "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n";
     var ret: i32 = 0;
-    while(ret <= 0) {
+    while (ret <= 0) {
         ret = try mbed.sslWrite(req);
     }
 
     ret = 0;
-    while(true) {
+    while (true) {
         var buf: [1024]u8 = undefined;
         ret = try mbed.sslRead(buf[0..]);
-        if(ret == 0) break;
-        if(ret < 0) break;
+        if (ret == 0) break;
+        if (ret < 0) break;
 
-        std.debug.warn("Bytes read {}", .{buf});
+        std.debug.warn("Bytes read {s}", .{buf});
         break;
     }
 
