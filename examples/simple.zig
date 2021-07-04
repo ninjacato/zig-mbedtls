@@ -13,7 +13,7 @@ pub fn main() !void {
 
     try mbed.x509CrtParseFile(cafile);
     try mbed.ctrDrbgSeed("SampleDevice");
-    try mbed.netConnect("google.com", "443", mbedTLS.Proto.TCP);
+    try mbed.netConnect("www.google.com", "443", mbedTLS.Proto.TCP);
     try mbed.sslConfDefaults(.IS_CLIENT, .TCP, .DEFAULT);
 
     mbed.sslConfAuthmode(.NONE);
@@ -38,7 +38,7 @@ pub fn main() !void {
         run = !r;
     }
 
-    const req = "GET / HTTP/1.1\r\nHost: google.com\r\nConnection: close\r\n\r\n";
+    const req = "GET / HTTP/1.1\r\nHost: www.google.com\r\nConnection: close\r\n\r\n";
     var ret: i32 = 0;
     while (ret <= 0) {
         ret = try mbed.sslWrite(req);
