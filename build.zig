@@ -1,41 +1,35 @@
-const Builder = @import("std").build.Builder;
+const zbuild = @import("std").build;
 
-pub fn build(b: *Builder) void {
+pub fn add_deps(b: *zbuild.LibExeObjStep) void {
+    b.addIncludeDir("/usr/local/opt/mbedtls/include");
+    b.addIncludeDir(".");
+    b.addCSourceFile("lib/zig_ssl_config.c", &[_][]const u8{"-std=c99"});
+    b.linkSystemLibrary("mbedcrypto");
+    b.linkSystemLibrary("mbedtls");
+    b.linkSystemLibrary("mbedx509");
+}
+
+pub fn build(b: *zbuild.Builder) void {
     b.verbose_cimport = true;
     //b.verbose_cc = true;
     //b.verbose_link = true;
 
     const mode = b.standardReleaseOptions();
     const lib = b.addStaticLibrary("zig-mbedtls", "src/main.zig");
+    add_deps(lib);
     lib.setBuildMode(mode);
-    lib.addIncludeDir("/usr/local/opt/mbedtls/include");
-    lib.addIncludeDir(".");
-    lib.addCSourceFile("lib/zig_ssl_config.c", &[_][]const u8{"-std=c99"});
-    lib.linkSystemLibrary("mbedcrypto");
-    lib.linkSystemLibrary("mbedtls");
-    lib.linkSystemLibrary("mbedx509");
     lib.install();
 
     var main_tests = b.addTest("src/main.zig");
+    add_deps(main_tests);
     main_tests.setBuildMode(.Debug);
-    main_tests.addIncludeDir("/usr/local/Cellar/mbedtls/2.16.6/include");
-    main_tests.addIncludeDir(".");
-    main_tests.addCSourceFile("lib/zig_ssl_config.c", &[_][]const u8{"-std=c99"});
-    main_tests.linkSystemLibrary("mbedcrypto");
-    main_tests.linkSystemLibrary("mbedtls");
-    main_tests.linkSystemLibrary("mbedx509");
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&main_tests.step);
 
     const example = b.addExecutable("simple", "examples/simple.zig");
+    add_deps(example);
     example.setBuildMode(mode);
-    example.addIncludeDir("/usr/local/Cellar/mbedtls/2.16.6/include");
-    example.addIncludeDir(".");
-    example.addCSourceFile("lib/zig_ssl_config.c", &[_][]const u8{"-std=c99"});
-    example.linkSystemLibrary("mbedcrypto");
-    example.linkSystemLibrary("mbedtls");
-    example.linkSystemLibrary("mbedx509");
     example.addPackagePath("mbedtls", "mbedtls.zig");
     example.install();
 
