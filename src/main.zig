@@ -1,10 +1,10 @@
-usingnamespace @import("bits.zig");
+const m = @import("bits.zig");
 const std = @import("std");
 const c = @cImport({
     @cInclude("lib/zig_ssl_config.h");
     @cInclude("mbedtls/entropy.h");
     @cInclude("mbedtls/ctr_drbg.h");
-    @cInclude("mbedtls/net.h");
+    @cInclude("mbedtls/net_sockets.h");
     @cInclude("mbedtls/ssl.h");
     @cInclude("mbedtls/x509.h");
     @cInclude("mbedtls/debug.h");
@@ -26,9 +26,9 @@ pub const mbedTLS = struct {
     drbg: *c.mbedtls_ctr_drbg_context,
     ca_chain: *c.mbedtls_x509_crt,
     entropyfn: @TypeOf(c.mbedtls_entropy_func),
-    allocator: *Allocator,
+    allocator: Allocator,
 
-    pub fn init(allocator: *Allocator) !mbedTLS {
+    pub fn init(allocator: Allocator) !mbedTLS {
         var net_ctx = try allocator.create(c.mbedtls_net_context);
         var entropy_ctx = try allocator.create(c.mbedtls_entropy_context);
         var ssl_config = c.zmbedtls_ssl_config_alloc();
@@ -57,9 +57,9 @@ pub const mbedTLS = struct {
         const rc = c.mbedtls_x509_crt_parse_file(self.ca_chain, &cafile[0]);
         switch (rc) {
             0 => {},
-            MBEDTLS_ERR_PK_ALLOC_FAILED => return error.AllocationFailed,
-            MBEDTLS_ERR_PK_BAD_INPUT_DATA => return error.BadInputData,
-            MBEDTLS_ERR_PK_FILE_IO_ERROR => return error.FileIoError,
+            m.MBEDTLS_ERR_PK_ALLOC_FAILED => return error.AllocationFailed,
+            m.MBEDTLS_ERR_PK_BAD_INPUT_DATA => return error.BadInputData,
+            m.MBEDTLS_ERR_PK_FILE_IO_ERROR => return error.FileIoError,
             else => unreachable,
         }
     }
@@ -72,10 +72,10 @@ pub const mbedTLS = struct {
         const rc = c.mbedtls_net_connect(self.server_fd, host, port, @enumToInt(proto));
         switch (rc) {
             0 => {},
-            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
-            MBEDTLS_ERR_NET_UNKNOWN_HOST => return error.UnknownHost,
-            MBEDTLS_ERR_NET_SOCKET_FAILED => return error.SocketFailed,
-            MBEDTLS_ERR_NET_CONNECT_FAILED => return error.ConnectionFailed,
+            m.MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
+            m.MBEDTLS_ERR_NET_UNKNOWN_HOST => return error.UnknownHost,
+            m.MBEDTLS_ERR_NET_SOCKET_FAILED => return error.SocketFailed,
+            m.MBEDTLS_ERR_NET_CONNECT_FAILED => return error.ConnectionFailed,
             else => unreachable,
         }
     }
@@ -87,14 +87,14 @@ pub const mbedTLS = struct {
 
     pub fn sslConfDefaults(self: *mbedTLS, ep: SSLEndpoint, pro: Proto, pre: SSLPreset) SSLConfigError!void {
         const rc = switch (pre) {
-            .SUITEB => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(ep), @enumToInt(pro), MBEDTLS_SSL_PRESET_SUITEB),
-            .DEFAULT => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(ep), @enumToInt(pro), MBEDTLS_SSL_PRESET_DEFAULT),
+            .SUITEB => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(ep), @enumToInt(pro), m.MBEDTLS_SSL_PRESET_SUITEB),
+            .DEFAULT => c.mbedtls_ssl_config_defaults(self.ssl_conf, @enumToInt(ep), @enumToInt(pro), m.MBEDTLS_SSL_PRESET_DEFAULT),
         };
 
         switch (rc) {
             0 => {},
-            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
-            MBEDTLS_ERR_MPI_BAD_INPUT_DATA => return error.BadInputData,
+            m.MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
+            m.MBEDTLS_ERR_MPI_BAD_INPUT_DATA => return error.BadInputData,
             else => unreachable,
         }
     }
@@ -105,7 +105,7 @@ pub const mbedTLS = struct {
         c.mbedtls_ssl_conf_authmode(self.ssl_conf, @enumToInt(verify));
     }
 
-    const rng_cb = fn (?*c_void, [*c]u8, usize) callconv(.C) c_int;
+    const rng_cb = fn (?*anyopaque, [*c]u8, usize) callconv(.C) c_int;
 
     pub fn sslConfRng(self: *mbedTLS, f_rng: ?rng_cb) void {
         if (f_rng) |cb| {
@@ -115,13 +115,13 @@ pub const mbedTLS = struct {
         }
     }
 
-    fn dbgfn(ctx: ?*c_void, level: c_int, file: [*c]const u8, line: c_int, str: [*c]const u8) callconv(.C) void {
+    fn dbgfn(ctx: ?*anyopaque, level: c_int, file: [*c]const u8, line: c_int, str: [*c]const u8) callconv(.C) void {
         _ = ctx;
         _ = level;
-        std.debug.warn("{s}:{}: {s}", .{ file, line, str });
+        std.debug.print("{s}:{}: {s}", .{ file, line, str });
     }
 
-    const debug_fn = fn (?*c_void, c_int, [*c]const u8, c_int, [*c]const u8) callconv(.C) void;
+    const debug_fn = fn (?*anyopaque, c_int, [*c]const u8, c_int, [*c]const u8) callconv(.C) void;
 
     pub fn setConfDebug(self: *mbedTLS, debug: ?debug_fn) void {
         var stdout = io.getStdOut().handle;
@@ -148,8 +148,8 @@ pub const mbedTLS = struct {
         const rc = c.mbedtls_ssl_setup(self.ssl, self.ssl_conf);
         switch (rc) {
             0 => {},
-            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
-            MBEDTLS_ERR_SSL_ALLOC_FAILED => return error.OutOfMemory,
+            m.MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
+            m.MBEDTLS_ERR_SSL_ALLOC_FAILED => return error.OutOfMemory,
             else => unreachable,
         }
     }
@@ -163,16 +163,16 @@ pub const mbedTLS = struct {
     pub fn sslHandshake(self: *mbedTLS) SSLHandshakeError!bool {
         const rc = c.mbedtls_ssl_handshake(self.ssl);
         return switch (rc) {
-            MBEDTLS_ERR_SSL_WANT_WRITE => error.WantWrite,
-            MBEDTLS_ERR_SSL_WANT_READ => error.WantRead,
-            MBEDTLS_ERR_SSL_BAD_INPUT_DATA => error.BadInputData,
-            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE => error.FeatureUnavailable,
-            MBEDTLS_ERR_NET_INVALID_CONTEXT => error.InvalidContext,
-            MBEDTLS_ERR_NET_CONN_RESET => error.ConnectionReset,
-            MBEDTLS_ERR_NET_SEND_FAILED => error.SendFailed,
-            MBEDTLS_ERR_SSL_HW_ACCEL_FAILED => error.HardwareAccelFailed,
-            MBEDTLS_ERR_SSL_COMPRESSION_FAILED => error.CompressionFailed,
-            MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL => error.BufferTooSmall,
+            m.MBEDTLS_ERR_SSL_WANT_WRITE => error.WantWrite,
+            m.MBEDTLS_ERR_SSL_WANT_READ => error.WantRead,
+            m.MBEDTLS_ERR_SSL_BAD_INPUT_DATA => error.BadInputData,
+            m.MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE => error.FeatureUnavailable,
+            m.MBEDTLS_ERR_NET_INVALID_CONTEXT => error.InvalidContext,
+            m.MBEDTLS_ERR_NET_CONN_RESET => error.ConnectionReset,
+            m.MBEDTLS_ERR_NET_SEND_FAILED => error.SendFailed,
+            m.MBEDTLS_ERR_SSL_HW_ACCEL_FAILED => error.HardwareAccelFailed,
+            m.MBEDTLS_ERR_SSL_COMPRESSION_FAILED => error.CompressionFailed,
+            m.MBEDTLS_ERR_SSL_BUFFER_TOO_SMALL => error.BufferTooSmall,
             else => return true,
         };
     }
@@ -183,8 +183,8 @@ pub const mbedTLS = struct {
         const rc = c.mbedtls_ssl_set_hostname(self.ssl, hostname.ptr);
         switch (rc) {
             0 => {},
-            MBEDTLS_ERR_SSL_BAD_INPUT_DATA => return error.BadInputData,
-            MBEDTLS_ERR_SSL_ALLOC_FAILED => return error.OutOfMemory,
+            m.MBEDTLS_ERR_SSL_BAD_INPUT_DATA => return error.BadInputData,
+            m.MBEDTLS_ERR_SSL_ALLOC_FAILED => return error.OutOfMemory,
             else => unreachable,
         }
     }
@@ -202,11 +202,11 @@ pub const mbedTLS = struct {
 
         switch (rc) {
             0 => {},
-            MBEDTLS_ERR_ERROR_GENERIC_ERROR => return error.GenericError,
-            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
-            MBEDTLS_ERR_AES_BAD_INPUT_DATA => return error.BadInputData,
-            MBEDTLS_ERR_AES_INVALID_KEY_LENGTH => return error.InvalidKeyLength,
-            MBEDTLS_ERR_AES_INVALID_INPUT_LENGTH => return error.InvalidInputLength,
+            m.MBEDTLS_ERR_ERROR_GENERIC_ERROR => return error.GenericError,
+            m.MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => return error.Corruption,
+            m.MBEDTLS_ERR_AES_BAD_INPUT_DATA => return error.BadInputData,
+            m.MBEDTLS_ERR_AES_INVALID_KEY_LENGTH => return error.InvalidKeyLength,
+            m.MBEDTLS_ERR_AES_INVALID_INPUT_LENGTH => return error.InvalidInputLength,
             else => unreachable,
         }
     }
@@ -217,11 +217,11 @@ pub const mbedTLS = struct {
         const rc = c.mbedtls_ssl_write(self.ssl, str.ptr, str.len);
 
         return switch (rc) {
-            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => error.Corruption,
-            MBEDTLS_ERR_SSL_BAD_INPUT_DATA => error.BadInputData,
-            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE => error.FeatureUnavailable,
-            MBEDTLS_ERR_SSL_WANT_WRITE => error.WantWrite,
-            MBEDTLS_ERR_SSL_WANT_READ => error.WantRead,
+            m.MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => error.Corruption,
+            m.MBEDTLS_ERR_SSL_BAD_INPUT_DATA => error.BadInputData,
+            m.MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE => error.FeatureUnavailable,
+            m.MBEDTLS_ERR_SSL_WANT_WRITE => error.WantWrite,
+            m.MBEDTLS_ERR_SSL_WANT_READ => error.WantRead,
             else => rc,
         };
     }
@@ -232,21 +232,20 @@ pub const mbedTLS = struct {
         const rc = c.mbedtls_ssl_read(self.ssl, buffer.ptr, buffer.len);
 
         return switch (rc) {
-            MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => error.Corruption,
-            MBEDTLS_ERR_SSL_BAD_INPUT_DATA => error.BadInputData,
-            MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE => error.FeatureUnavailable,
-            MBEDTLS_ERR_SSL_WANT_WRITE => error.WantWrite,
-            MBEDTLS_ERR_SSL_WANT_READ => error.WantRead,
-            MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY => error.PeerCloseNotify,
+            m.MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED => error.Corruption,
+            m.MBEDTLS_ERR_SSL_BAD_INPUT_DATA => error.BadInputData,
+            m.MBEDTLS_ERR_SSL_FEATURE_UNAVAILABLE => error.FeatureUnavailable,
+            m.MBEDTLS_ERR_SSL_WANT_WRITE => error.WantWrite,
+            m.MBEDTLS_ERR_SSL_WANT_READ => error.WantRead,
+            m.MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY => error.PeerCloseNotify,
             else => rc,
         };
     }
 
     pub fn deinit(self: *mbedTLS) void {
-        if (self.server_fd.fd > 0)
-            os.close(self.server_fd.fd);
-
+        c.mbedtls_net_close(self.server_fd);
         c.zmbedtls_ssl_config_free(self.ssl_conf);
+
         self.allocator.destroy(self.server_fd);
         self.allocator.destroy(self.entropy);
         self.allocator.destroy(self.ssl);

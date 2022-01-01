@@ -8,7 +8,7 @@ pub fn main() !void {
     const PageAllocator = std.heap.page_allocator;
     var arena = ArenaAllocator.init(PageAllocator);
     const cafile = "cacert.pem";
-    var mbed = try mbedTLS.init(&arena.allocator);
+    var mbed = try mbedTLS.init(arena.allocator());
     defer mbed.deinit();
 
     try mbed.x509CrtParseFile(cafile);
@@ -51,7 +51,7 @@ pub fn main() !void {
         if (ret == 0) break;
         if (ret < 0) break;
 
-        std.debug.warn("Bytes read {s}", .{buf});
+        std.debug.print("Bytes read {s}", .{buf});
         break;
     }
 

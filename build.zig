@@ -1,9 +1,10 @@
 const zbuild = @import("std").build;
 
 pub fn add_deps(b: *zbuild.LibExeObjStep) void {
-    b.addIncludeDir("/usr/local/opt/mbedtls/include");
+    b.addIncludeDir("/opt/homebrew/include");
     b.addIncludeDir(".");
     b.addCSourceFile("lib/zig_ssl_config.c", &[_][]const u8{"-std=c99"});
+    b.addLibPath("/opt/homebrew/lib");
     b.linkSystemLibrary("mbedcrypto");
     b.linkSystemLibrary("mbedtls");
     b.linkSystemLibrary("mbedx509");
